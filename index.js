@@ -3,6 +3,7 @@ var bodyParser = require('body-parser');
 var multer = require('multer');
 var upload = multer();
 const app = express();
+var Jimp = require('jimp');
 const fetch = require("node-fetch");
 const port = 5000
 
@@ -147,12 +148,9 @@ const bestCrop = (temp, precip) => {
     return crop;
 }
 
-app.post('/geo', (req, res) => {
-    const lat = req.body.lat;
-    const lng = req.body.lng;
-    const area = req.body.area;
+const get_crops = (lat, lng, acres, weed_cost) => {
 
-    fetch("http://api.worldweatheronline.com/premium/v1/weather.ashx?key=902e8b18c64746918f924034202302&q="
+    return fetch("http://api.worldweatheronline.com/premium/v1/weather.ashx?key=902e8b18c64746918f924034202302&q="
     + lat + ',' + lng + '&format=json',
     {
         method: 'GET',
@@ -194,8 +192,7 @@ app.post('/geo', (req, res) => {
         for (var i = 0; i < 4; i++) {
             crop = bestCrop(quarter_climates[i]["temp"], quarter_climates[i]["precip"])
             suggested_crops.push(crop)
-            acres = area / 43560
-            quarter_cost = fert_cost * acres + crop["seeds"] * crop["price"] / crop["seeds_per_ounce"] * acres
+            quarter_cost = fert_cost * acres + crop["seeds"] * crop["price"] / crop["seeds_per_ounce"] * acres + weed_cost / 4
             quarter_profit = crop["sell"] * crop["yield"] * crop["rows"] * acres * crop["yield_percent"] - quarter_cost
             
             if (quarter_profit < 0) {
@@ -215,24 +212,26 @@ app.post('/geo', (req, res) => {
             avg_climate: quarter_climates 
         }
 
-        res.send(response)
+        return response
 
     } );
 
-})
+}
 
 const get_weeds = (avg, num_weeds) => {
-    farm_weeds = {}
+    farm_weeds = {
+        total_cost: 0
+    }
     for (var i =0; i < num_weeds; i++) {
         var x = Math.sin(avg++) * 7.99;
-        weed_num = Math.floor(x);
+        weed_num = Math.floor(Math.abs(x));
         weed_name = weeds[weed_num]
         weed_herb = weed_to_herb[weed_name]
         herb_price = herb_prices[weed_herb]
-        
+        farm_weeds["total_cost"] += herb_price * .1
         if (farm_weeds[weed_name]) {
-            farm_weeds[weed_name][cost] += herb_price * .1
-            farm_weeds[weed_name][gallons] += .1
+            farm_weeds[weed_name]['cost'] += herb_price * .1
+            farm_weeds[weed_name]['gallons'] += .1
             continue
         }
 
@@ -242,16 +241,62 @@ const get_weeds = (avg, num_weeds) => {
             cost: herb_price * .1,
             gallons: .1
         }
+
     }
+
+    return farm_weeds
+
 }
 
 app.post('/satellite', (req, res) => {
 
-    const avg = req.body.avg;
-    const num_weeds = req.body.area / 43560 * 2
-
+    Jimp.read(req.body.url, function (err, image) {
     
+        avg_rgb = {
+            r: 0,
+            g: 0,
+            b: 0
+        }
+        expected_rgb = {
+            r: 48,
+            g: 84,
+            b: 72
+        }
+    
+        for (var i = 0; i < image.bitmap.height; i++) {
+            for (var j = 0; j < image.bitmap.width; j++) {
+                color = image.getPixelColor(i, j);
+                rgb = Jimp.intToRGBA(color);
+                avg_rgb['r'] += rgb['r']
+                avg_rgb['g'] += rgb['g']
+                avg_rgb['b'] += rgb['b']
+            }
+        }
+        
+        avg_rgb['r'] /= image.bitmap.height * image.bitmap.width
+        avg_rgb['g'] /= image.bitmap.height * image.bitmap.width
+        avg_rgb['b'] /= image.bitmap.height * image.bitmap.width
+    
+        if (Math.abs(avg_rgb['r'] + avg_rgb['g'] + avg_rgb['b'] - expected_rgb['r'] - expected_rgb['g'] - expected_rgb['b']) > 200) {
+            res.status(409).send("Invalid farm")
+        } else {
+            avg = (avg_rgb['r'] + avg_rgb['g'] + avg_rgb['b']) / 3
+            const acres = req.body.area / 43560
+            const lat = req.body.lat
+            const lng = req.body.lng
 
-})
+            farm_weeds = get_weeds(avg, acres * 2)
+
+            get_crops(lat, lng, acres, farm_weeds["total_cost"]).then((farm_crops) => {
+                res.send({
+                    weeds: farm_weeds,
+                    crops: farm_crops
+                })
+            })
+
+        }
+    
+    })
+});    
 
 app.listen(port, () => console.log(`Listening on port ${port}`))
