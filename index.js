@@ -133,7 +133,7 @@ const bestCrop = (temp, precip, acres) => {
   }
 
   crop = Object.assign({}, crops[best]);
-  multiplier = Math.max(1 - score * .1, 0);
+  multiplier = Math.max(1 - score * .02, 0);
   crop['yield'] *= multiplier * acres; // lbs / acre
   return crop;
 };
@@ -183,8 +183,8 @@ const get_crops = (lat, lng, acres, weed_cost) => {
       const revenue = crop.sell * crop.yield * crop.rows * acres;
       crops.push({
         ...crop,
-        cost: cost * 100,
-        revenue,
+        cost: cost * 20,
+        revenue: revenue / 10,
       });
     }
 
